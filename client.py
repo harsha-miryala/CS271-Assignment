@@ -1,20 +1,18 @@
 import socket
 from threading import Thread
 import pickle
-import time 
+import time
 from util import *
 import sys
-import heapq
-import hashlib
 
-BLOCKCHAIN = {}
+BLOCKCHAIN = Blockchain()
+CHAIN_HEAD = 0
 CLOCK = LamportClock(0,0)
 CONNECTIONS = {}
 PID = 0
-REQUEST_QUEUE = []
-transactionFlag = False
-user_input = ""
-replyCount = 0
+TRANSACTION_FLAG = False
+USER_INPUT = ""
+REPLY_COUNT = 0
 
 class Connections(Thread):
     def __init__(self,connection):
@@ -22,68 +20,66 @@ class Connections(Thread):
         self.connection = connection
 
     def run(self):
-        global replyCount
-        global transactionFlag
+        global REPLY_COUNT
+        global TRANSACTION_FLAG
         global CLOCK
-        global REQUEST_QUEUE
+        global BLOCKCHAIN
 
         while True:
             response = self.connection.recv(BUFFER_SIZE)
             if not response:
                 continue
             data = pickle.loads(response)
-            CLOCK.updateClock(data.clock)
-            print("Current clock of process " + str(PID) + " is " + str(CLOCK))
 
             if data.reqType == MUTEX:
-                REQUEST_QUEUE.append(LamportClock(data.reqClock.clock, data.reqClock.pid))
-                heapq.heapify(REQUEST_QUEUE)
-                print("REQUEST recieved from " + str(data.fromPid) + " at " + str(CLOCK))
-                CLOCK.incrementClock()
+                # Add the block to blockchain and get the transaction details from data
+                # use insert 
+                CLOCK.updateClock(data.clock)
+                BLOCKCHAIN.insert(data.transaction, data.clock)
+                print("REQUEST recieved from " + str(data.fromPid) + " at " + str(data.clock))
                 sleep()
                 print("REPLY sent to " + str(data.fromPid) + " at " + str(CLOCK))
                 reply = RequestMessage(PID, CLOCK, REPLY)
                 self.connection.send(pickle.dumps(reply))
 
             if data.reqType == REPLY:
-                print("REPLY recieved from " + str(data.fromPid) + " at " + str(CLOCK))
-                replyCount += 1
-                if replyCount == CLIENT_COUNT-1 and REQUEST_QUEUE[0].pid == PID:
-                    print("Local Queue:")
-                    for i in REQUEST_QUEUE:
-                        print(str(i))
+                print("REPLY recieved from " + str(data.fromPid) + " at " + str(data.clock))
+                REPLY_COUNT += 1
+                # you have all replies, how do u know when to enter into lock
+                if REPLY_COUNT == CLIENT_COUNT-1 and BLOCKCHAIN.header().transaction.sender == PID:
+                    print("Local Queue: ")
+                    for idx in range(BLOCKCHAIN.head, BLOCKCHAIN.length):
+                        print("{}, {}".format(BLOCKCHAIN.data[idx].clock, BLOCKCHAIN.data[idx].transaction))
+                    print("End of Local Queue")
+                    print("Executing Transaction")
                     self.handle_transaction(data)
-                    heapq.heappop(REQUEST_QUEUE)
-                    heapq.heapify(REQUEST_QUEUE)
-                    replyCount = 0
-                    broadcast(RELEASE)
-                    transactionFlag = True
+                    REPLY_COUNT = 0
+                    TRANSACTION_FLAG = True
 
             if data.reqType == RELEASE:
                 print("Inside release")
                 print("Local Queue:")
-                for i in REQUEST_QUEUE:
-                    print(str(i))
+                # check the status from data and update the blockchain
+                # data.fromPid and go back and check
+                # time complexity = O(no.of clients)
+                for idx in range(BLOCKCHAIN.head, BLOCKCHAIN.length):
+                    print("{}, {}".format(BLOCKCHAIN.data[idx].clock, BLOCKCHAIN.data[idx].transaction))
+                print("End of Local Queue")
                 print("RELEASE recieved from " + str(data.fromPid) + " at " + str(CLOCK))
-                heapq.heappop(REQUEST_QUEUE)
-                heapq.heapify(REQUEST_QUEUE)
-                if len(REQUEST_QUEUE) > 0 and REQUEST_QUEUE[0].pid == PID and replyCount == 2:
-                    print("Execute Transaction")
+                BLOCKCHAIN.header().update_status(data.status)
+                BLOCKCHAIN.move()
+                if BLOCKCHAIN.head-1 != BLOCKCHAIN.length and BLOCKCHAIN.header().transaction.sender == PID and REPLY_COUNT == CLIENT_COUNT-1:
+                    print("Executing Transaction")
                     self.handle_transaction(data)
-                    heapq.heappop(REQUEST_QUEUE)
-                    heapq.heapify(REQUEST_QUEUE)
-                    replyCount = 0
-                    broadcast("RELEASE")
-                    transactionFlag = True
+                    REPLY_COUNT = 0
+                    TRANSACTION_FLAG = True
 
     def handle_transaction(self, data):
         global CLOCK
         global PID
         global CONNECTIONS
-        global user_input
-        reciever, amount = [int(x) for x in user_input.split()]
-        transaction = Transaction(PID, reciever, amount)
-        CLOCK.incrementClock()
+        global USER_INPUT
+        transaction = BLOCKCHAIN.header().transaction
         sleep()
         print("Balance request sent to server" + " at " + str(CLOCK))
         request = RequestMessage(PID, CLOCK, BALANCE)
@@ -92,46 +88,45 @@ class Connections(Thread):
         sleep()
         print("======================================")
         print("Balance before transaction - {} $".format(balance))
-        if balance >= amount:
-            CLOCK.incrementClock()
-            # Instead should add the last block
-            block = Block(hashlib.sha256(b"").digest(), transaction)
-            # request = RequestMessage(pid, data.clock, "ADD_BLOCK", None, block)
-            request = RequestMessage(PID, data.clock, TRANSACT, None, block)
+        status = None
+        if balance >= transaction.amount:
+            request = RequestMessage(PID, data.clock, TRANSACT, None, transaction)
             CONNECTIONS[0].send(pickle.dumps(request))
             message = pickle.loads(CONNECTIONS[0].recv(BUFFER_SIZE))
-            CLOCK.incrementClock()
             print("Transaction was " + str(message))
-            print("Balance after transaction is {} $".format(balance-amount))
+            print("Balance after transaction is {} $".format(balance-transaction.amount))
             print("======================================")
+            status = SUCCESS
         else:
             print("Insufficient Balance")
             print("======================================")
+            status = ABORT
+        BLOCKCHAIN.header().update_status(status)
+        BLOCKCHAIN.move()
+        # send release with status of transaction
+        broadcast(RELEASE, status)
 
 def sleep():
     time.sleep(SLEEP_TIME)
 
-def sendRequest(client, reqType, reqClock):
+def sendRequest(client, reqType, status, transaction):
     global CLOCK
     global PID
     global CONNECTIONS
-    CLOCK.incrementClock()
-    print("Current clock of process {} is {}".format(PID, CLOCK))
     sleep()
     if reqType == "MUTEX":
         print("REQUEST sent to " + str(client) + " at " + str(CLOCK))
     elif reqType == "RELEASE":
         print("RELEASE sent to " + str(client) + " at " + str(CLOCK))
-
-    msg = RequestMessage(PID, CLOCK, reqType, reqClock)
+    msg = RequestMessage(PID, CLOCK, reqType, status, transaction)
     data_string = pickle.dumps(msg)
     CONNECTIONS[client].sendall(data_string)
 
-def broadcast(reqType, reqClock = None):
+def broadcast(reqType, status=None, transaction=None):
     global PID
     for dest in range(1, CLIENT_COUNT+1):
         if PID != dest:
-            sendRequest(dest, reqType, reqClock)
+            sendRequest(dest, reqType, status, transaction)
 
 def close_sockets():
     global CONNECTIONS
@@ -166,10 +161,10 @@ def main():
     global CLOCK
     global PID
     global CONNECTIONS
-    global REQUEST_QUEUE
-    global replyCount
-    global transactionFlag
-    global user_input
+    global BLOCKCHAIN
+    global REPLY_COUNT
+    global TRANSACTION_FLAG
+    global USER_INPUT
     if int(sys.argv[1])>CLIENT_COUNT or int(sys.argv[1])<0:
         print("PID not in the set of allowed pids".format(sys.argv[1]))
         exit()
@@ -207,38 +202,44 @@ def main():
     print("Current Balance is $10")
     print("==============================================================")
     print("| For Balance type : 'BAL'                                   |")
+    print("| For Blockchain type : 'BCHAIN'                             |")
     print("| For transferring money type : 'RECV_ID AMOUNT' Eg.(2 5)    |")
     print("| To quit type 'Q'                                           |") 
     print("==============================================================")
     while True:
-        transactionFlag = False
+        TRANSACTION_FLAG = False
         print("===== Enter a command to compute =====")
-        user_input = input()
-        if user_input != QUIT and user_input != BALANCE and len(user_input.split()) != 2:
+        USER_INPUT = input()
+        if USER_INPUT not in [QUIT, BALANCE, BCHAIN] and len(USER_INPUT.split()) != 2:
             print("Please enter valid input")
             continue
 
-        if user_input == QUIT:
-            break
+        if USER_INPUT == BCHAIN:
+            BLOCKCHAIN.print()
+            continue
 
-        CLOCK.incrementClock()
-        print("Current clock of process " + str(PID) + " : " + str(CLOCK))
-        requestClock = LamportClock(CLOCK.clock, CLOCK.pid)
+        if USER_INPUT == QUIT:
+            break
         
-        if user_input == BALANCE:
+        if USER_INPUT == BALANCE:
             request = RequestMessage(PID, CLOCK, BALANCE)
             CONNECTIONS[0].sendall(pickle.dumps(request))
             balance = pickle.loads(CONNECTIONS[0].recv(BUFFER_SIZE))
             print("======================================")
             print("The balance for Client {} is {} $".format(PID, balance))
             print("======================================")
+            continue
         
         else:
-            REQUEST_QUEUE.append(requestClock)
-            heapq.heapify(REQUEST_QUEUE)
-            replyCount = 0
-            broadcast(MUTEX, requestClock)
-            while transactionFlag == False:
+            CLOCK.incrementClock()
+            print("Current clock of process " + str(PID) + " : " + str(CLOCK))
+            # Add the transaction
+            reciever, amount = [int(x) for x in USER_INPUT.split()]
+            transaction = Transaction(PID, reciever, amount)
+            BLOCKCHAIN.insert(transaction, CLOCK)
+            REPLY_COUNT = 0
+            broadcast(MUTEX, transaction=transaction)
+            while TRANSACTION_FLAG == False:
                 time.sleep(1)
 
     close_sockets()

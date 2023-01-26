@@ -41,11 +41,11 @@ class Server_Thread(Thread):
     def add_transaction(self, data):
         global BALANCE_SHEET
         global CLIENT_MAP
-        print("Adding a transaction of {} $ from Client {} to Client {}".format(data.block.transaction.amount,
-                                    data.block.transaction.sender, data.block.transaction.reciever))
+        print("Adding a transaction of {} $ from Client {} to Client {}".format(data.transaction.amount,
+                                    data.transaction.sender, data.transaction.reciever))
         try:
-            BALANCE_SHEET[data.block.transaction.sender] -= data.block.transaction.amount
-            BALANCE_SHEET[data.block.transaction.reciever] += data.block.transaction.amount
+            BALANCE_SHEET[data.transaction.sender] -= data.transaction.amount
+            BALANCE_SHEET[data.transaction.reciever] += data.transaction.amount
             CLIENT_MAP[data.fromPid].connection.sendall(pickle.dumps(SUCCESS))
         except:
             CLIENT_MAP[data.fromPid].connection.sendall(pickle.dumps(ABORT))

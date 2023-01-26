@@ -7,14 +7,15 @@ import sys
 import heapq
 import hashlib
 
-BLOCKCHAIN = {}
+BLOCKCHAIN = []
+CHAIN_HEAD = 0
 CLOCK = LamportClock(0,0)
 CONNECTIONS = {}
 PID = 0
 REQUEST_QUEUE = []
-transactionFlag = False
-user_input = ""
-replyCount = 0
+TRANSACTION_FLAG = False
+USER_INPUT = ""
+REPLY_COUNT = 0
 
 class Connections(Thread):
     def __init__(self,connection):
@@ -22,8 +23,8 @@ class Connections(Thread):
         self.connection = connection
 
     def run(self):
-        global replyCount
-        global transactionFlag
+        global REPLY_COUNT
+        global TRANSACTION_FLAG
         global CLOCK
         global REQUEST_QUEUE
 
@@ -36,6 +37,7 @@ class Connections(Thread):
             print("Current clock of process " + str(PID) + " is " + str(CLOCK))
 
             if data.reqType == MUTEX:
+                # Add the block to blockchain and get the transaction details from data
                 REQUEST_QUEUE.append(LamportClock(data.reqClock.clock, data.reqClock.pid))
                 heapq.heapify(REQUEST_QUEUE)
                 print("REQUEST recieved from " + str(data.fromPid) + " at " + str(CLOCK))
@@ -47,41 +49,47 @@ class Connections(Thread):
 
             if data.reqType == REPLY:
                 print("REPLY recieved from " + str(data.fromPid) + " at " + str(CLOCK))
-                replyCount += 1
-                if replyCount == CLIENT_COUNT-1 and REQUEST_QUEUE[0].pid == PID:
+                REPLY_COUNT += 1
+                # you have all replies, how do u know when to enter into lock
+                if REPLY_COUNT == CLIENT_COUNT-1 and REQUEST_QUEUE[0].pid == PID:
                     print("Local Queue:")
                     for i in REQUEST_QUEUE:
                         print(str(i))
                     self.handle_transaction(data)
                     heapq.heappop(REQUEST_QUEUE)
                     heapq.heapify(REQUEST_QUEUE)
-                    replyCount = 0
+                    REPLY_COUNT = 0
+                    # send release with status of transaction
                     broadcast(RELEASE)
-                    transactionFlag = True
+                    TRANSACTION_FLAG = True
 
             if data.reqType == RELEASE:
                 print("Inside release")
                 print("Local Queue:")
+                # check the status from data and update the blockchain
+                # data.fromPid and go back and check
+                # time complexity = O(no.of clients)
                 for i in REQUEST_QUEUE:
                     print(str(i))
                 print("RELEASE recieved from " + str(data.fromPid) + " at " + str(CLOCK))
                 heapq.heappop(REQUEST_QUEUE)
                 heapq.heapify(REQUEST_QUEUE)
-                if len(REQUEST_QUEUE) > 0 and REQUEST_QUEUE[0].pid == PID and replyCount == 2:
+                if len(REQUEST_QUEUE) > 0 and REQUEST_QUEUE[0].pid == PID and REPLY_COUNT == 2:
                     print("Execute Transaction")
                     self.handle_transaction(data)
                     heapq.heappop(REQUEST_QUEUE)
                     heapq.heapify(REQUEST_QUEUE)
-                    replyCount = 0
+                    REPLY_COUNT = 0
+                    # send release with status of transaction
                     broadcast("RELEASE")
-                    transactionFlag = True
+                    TRANSACTION_FLAG = True
 
     def handle_transaction(self, data):
         global CLOCK
         global PID
         global CONNECTIONS
-        global user_input
-        reciever, amount = [int(x) for x in user_input.split()]
+        global USER_INPUT
+        reciever, amount = [int(x) for x in USER_INPUT.split()]
         transaction = Transaction(PID, reciever, amount)
         CLOCK.incrementClock()
         sleep()
@@ -167,9 +175,9 @@ def main():
     global PID
     global CONNECTIONS
     global REQUEST_QUEUE
-    global replyCount
-    global transactionFlag
-    global user_input
+    global REPLY_COUNT
+    global TRANSACTION_FLAG
+    global USER_INPUT
     if int(sys.argv[1])>CLIENT_COUNT or int(sys.argv[1])<0:
         print("PID not in the set of allowed pids".format(sys.argv[1]))
         exit()
@@ -211,21 +219,17 @@ def main():
     print("| To quit type 'Q'                                           |") 
     print("==============================================================")
     while True:
-        transactionFlag = False
+        TRANSACTION_FLAG = False
         print("===== Enter a command to compute =====")
-        user_input = input()
-        if user_input != QUIT and user_input != BALANCE and len(user_input.split()) != 2:
+        USER_INPUT = input()
+        if USER_INPUT != QUIT and USER_INPUT != BALANCE and len(USER_INPUT.split()) != 2:
             print("Please enter valid input")
             continue
 
-        if user_input == QUIT:
+        if USER_INPUT == QUIT:
             break
-
-        CLOCK.incrementClock()
-        print("Current clock of process " + str(PID) + " : " + str(CLOCK))
-        requestClock = LamportClock(CLOCK.clock, CLOCK.pid)
         
-        if user_input == BALANCE:
+        if USER_INPUT == BALANCE:
             request = RequestMessage(PID, CLOCK, BALANCE)
             CONNECTIONS[0].sendall(pickle.dumps(request))
             balance = pickle.loads(CONNECTIONS[0].recv(BUFFER_SIZE))
@@ -234,11 +238,13 @@ def main():
             print("======================================")
         
         else:
+            CLOCK.incrementClock()
+            print("Current clock of process " + str(PID) + " : " + str(CLOCK))
             REQUEST_QUEUE.append(requestClock)
             heapq.heapify(REQUEST_QUEUE)
-            replyCount = 0
+            REPLY_COUNT = 0
             broadcast(MUTEX, requestClock)
-            while transactionFlag == False:
+            while TRANSACTION_FLAG == False:
                 time.sleep(1)
 
     close_sockets()
