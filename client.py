@@ -8,6 +8,7 @@ import sys
 BLOCKCHAIN = Blockchain()
 CHAIN_HEAD = 0
 CLOCK = LamportClock(0,0)
+REQ_CLOCK = LamportClock(0,0)
 CONNECTIONS = {}
 PID = 0
 TRANSACTION_FLAG = False
@@ -23,6 +24,7 @@ class Connections(Thread):
         global REPLY_COUNT
         global TRANSACTION_FLAG
         global CLOCK
+        global REQ_CLOCK
         global BLOCKCHAIN
 
         while True:
@@ -33,10 +35,9 @@ class Connections(Thread):
 
             if data.reqType == MUTEX:
                 # Add the block to blockchain and get the transaction details from data
-                # use insert 
-                CLOCK.updateClock(data.clock)
-                BLOCKCHAIN.insert(data.transaction, data.clock.copy())
-                print("REQUEST recieved from " + str(data.fromPid) + " at " + str(data.clock))
+                REQ_CLOCK = data.clock.copy()
+                BLOCKCHAIN.insert(data.transaction, REQ_CLOCK)
+                print("REQUEST recieved from " + str(data.fromPid) + " at " + str(REQ_CLOCK))
                 sleep()
                 print("REPLY sent to " + str(data.fromPid) + " at " + str(CLOCK))
                 reply = RequestMessage(PID, CLOCK, REPLY)
@@ -158,6 +159,7 @@ def get_connection(source, dest):
 
 def main():
     global CLOCK
+    global REQ_CLOCK
     global PID
     global CONNECTIONS
     global BLOCKCHAIN
@@ -235,10 +237,13 @@ def main():
             continue
         
         else:
-            CLOCK.incrementClock()
+            reciever, amount = [int(x) for x in USER_INPUT.split()]
+            if reciever == PID:
+                print("Can't send money to yourself")
+                continue
+            CLOCK.updateClock(REQ_CLOCK)
             print("Current clock of process " + str(PID) + " : " + str(CLOCK))
             # Add the transaction
-            reciever, amount = [int(x) for x in USER_INPUT.split()]
             transaction = Transaction(PID, reciever, amount)
             BLOCKCHAIN.insert(transaction, CLOCK.copy())
             broadcast(MUTEX, clock=CLOCK.copy(), transaction=transaction)

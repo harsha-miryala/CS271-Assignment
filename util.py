@@ -112,6 +112,7 @@ class Blockchain:
         self.data.append(block)
         self.length += 1
         self.head = self.length - 1
+        print("{} added at {} with clock - {}".format(transaction, self.head, clock))
     
     def insert(self, transaction, clock):
         if self.head == -1:
@@ -120,6 +121,8 @@ class Blockchain:
         # check if it can be added back
         reqd_pos = self.head
         for idx in range(self.head, -1, -1):
+            if self.data[idx].status != IN_PROGRESS:
+                break
             if clock < self.data[idx].clock:
                 reqd_pos -= 1
                 self.head = reqd_pos + 1
