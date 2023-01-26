@@ -35,7 +35,7 @@ class Connections(Thread):
                 # Add the block to blockchain and get the transaction details from data
                 # use insert 
                 CLOCK.updateClock(data.clock)
-                BLOCKCHAIN.insert(data.transaction, data.clock)
+                BLOCKCHAIN.insert(data.transaction, data.clock.copy())
                 print("REQUEST recieved from " + str(data.fromPid) + " at " + str(data.clock))
                 sleep()
                 print("REPLY sent to " + str(data.fromPid) + " at " + str(CLOCK))
@@ -104,29 +104,28 @@ class Connections(Thread):
         BLOCKCHAIN.header().update_status(status)
         BLOCKCHAIN.move()
         # send release with status of transaction
-        broadcast(RELEASE, status)
+        broadcast(RELEASE, clock=CLOCK.copy(), status=status)
 
 def sleep():
     time.sleep(SLEEP_TIME)
 
-def sendRequest(client, reqType, status, transaction):
-    global CLOCK
+def sendRequest(client, clock, reqType, status, transaction):
     global PID
     global CONNECTIONS
     sleep()
     if reqType == "MUTEX":
-        print("REQUEST sent to " + str(client) + " at " + str(CLOCK))
+        print("REQUEST sent to " + str(client) + " at " + str(clock))
     elif reqType == "RELEASE":
-        print("RELEASE sent to " + str(client) + " at " + str(CLOCK))
-    msg = RequestMessage(PID, CLOCK, reqType, status, transaction)
+        print("RELEASE sent to " + str(client) + " at " + str(clock))
+    msg = RequestMessage(PID, clock, reqType, status, transaction)
     data_string = pickle.dumps(msg)
     CONNECTIONS[client].sendall(data_string)
 
-def broadcast(reqType, status=None, transaction=None):
+def broadcast(reqType, clock=CLOCK, status=None, transaction=None):
     global PID
     for dest in range(1, CLIENT_COUNT+1):
         if PID != dest:
-            sendRequest(dest, reqType, status, transaction)
+            sendRequest(dest, clock, reqType, status, transaction)
 
 def close_sockets():
     global CONNECTIONS
@@ -203,6 +202,7 @@ def main():
     print("==============================================================")
     print("| For Balance type : 'BAL'                                   |")
     print("| For Blockchain type : 'BCHAIN'                             |")
+    print("| For Head of BCHAIN type : 'HEAD'                           |")
     print("| For transferring money type : 'RECV_ID AMOUNT' Eg.(2 5)    |")
     print("| To quit type 'Q'                                           |") 
     print("==============================================================")
@@ -210,12 +210,16 @@ def main():
         TRANSACTION_FLAG = False
         print("===== Enter a command to compute =====")
         USER_INPUT = input()
-        if USER_INPUT not in [QUIT, BALANCE, BCHAIN] and len(USER_INPUT.split()) != 2:
+        if USER_INPUT not in [QUIT, BALANCE, BCHAIN, HEAD] and len(USER_INPUT.split()) != 2:
             print("Please enter valid input")
             continue
 
         if USER_INPUT == BCHAIN:
             BLOCKCHAIN.print()
+            continue
+
+        if USER_INPUT == HEAD:
+            print(str(BLOCKCHAIN.header()))
             continue
 
         if USER_INPUT == QUIT:
@@ -236,11 +240,11 @@ def main():
             # Add the transaction
             reciever, amount = [int(x) for x in USER_INPUT.split()]
             transaction = Transaction(PID, reciever, amount)
-            BLOCKCHAIN.insert(transaction, CLOCK)
+            BLOCKCHAIN.insert(transaction, CLOCK.copy())
+            broadcast(MUTEX, clock=CLOCK.copy(), transaction=transaction)
             REPLY_COUNT = 0
-            broadcast(MUTEX, transaction=transaction)
             while TRANSACTION_FLAG == False:
-                time.sleep(1)
+                time.sleep(3)
 
     close_sockets()
 

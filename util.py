@@ -30,6 +30,7 @@ MUTEX = "MUTEX"
 RELEASE = "RELEASE"
 REPLY = "REPLY"
 IN_PROGRESS = "IN_PROGRESS"
+HEAD = "HEAD"
 
 class RequestMessage:
     def __init__(self, fromPid, clock, reqType, status = None, transaction = None):
@@ -43,6 +44,9 @@ class LamportClock:
     def __init__(self, clock, pid):
         self.clock = clock
         self.pid = pid
+    
+    def copy(self):
+        return LamportClock(self.clock, self.pid)
 
     def incrementClock(self):
         self.clock += 1
@@ -77,7 +81,12 @@ class Block:
         self.status = IN_PROGRESS
 
     def __str__(self):
-        return str(self.headerHash) + "|" + str(self.transaction) + "|" + self.status
+        # print(str(self.headerHash))
+        # print(str(self.transaction))
+        # print(self.status)
+        # print(str(self.clock))
+        return str(self.headerHash) + "|\n" + str(self.transaction) + \
+               " | " + self.status + " | " + str(self.clock)
     
     def update_status(self, status):
         self.status = status
@@ -89,12 +98,12 @@ class Blockchain:
         self.length = 0
     
     def header(self):
-        return self.data[self.head]
+        return self.data[self.head] if self.length!=0 else "Empty Blockchain"
     
     def move(self):
         self.head += 1
         if self.head >= self.length:
-            self.head = self.length - 1
+            self.head = -1
     
     def append(self, transaction, clock):
         prev_hash = "" if self.length==0 else str(self.data[self.length-1])
@@ -105,7 +114,7 @@ class Blockchain:
         self.head = self.length - 1
     
     def insert(self, transaction, clock):
-        if self.length == 0:
+        if self.head == -1:
             self.append(transaction, clock)
             return
         # check if it can be added back
@@ -126,6 +135,7 @@ class Blockchain:
         block = Block(headerHash, transaction, clock)
         self.data.insert(reqd_pos+1, block)
         self.length += 1
+        print("{} added at {} with clock - {}".format(transaction, reqd_pos+1, clock))
         self.update_chain(reqd_pos+1)
     
     def update_chain(self, pos):
