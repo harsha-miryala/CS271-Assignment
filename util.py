@@ -81,10 +81,6 @@ class Block:
         self.status = IN_PROGRESS
 
     def __str__(self):
-        # print(str(self.headerHash))
-        # print(str(self.transaction))
-        # print(self.status)
-        # print(str(self.clock))
         return str(self.headerHash) + "|\n" + str(self.transaction) + \
                " | " + self.status + " | " + str(self.clock)
     
@@ -107,7 +103,7 @@ class Blockchain:
     
     def append(self, transaction, clock):
         prev_hash = "" if self.length==0 else str(self.data[self.length-1])
-        headerHash = hashlib.sha256(prev_hash.encode()).digest()
+        headerHash = hashlib.sha256(prev_hash.encode()).hexdigest()
         block = Block(headerHash, transaction, clock)
         self.data.append(block)
         self.length += 1
@@ -134,7 +130,7 @@ class Blockchain:
             else:
                 break
         prev_hash = ""
-        headerHash = hashlib.sha256(prev_hash.encode()).digest()
+        headerHash = hashlib.sha256(prev_hash.encode()).hexdigest()
         block = Block(headerHash, transaction, clock)
         self.data.insert(reqd_pos+1, block)
         self.length += 1
@@ -144,7 +140,7 @@ class Blockchain:
     def update_chain(self, pos):
         for idx in range(pos, self.length):
             prev_hash = "" if idx==0 else str(self.data[idx-1])
-            headerHash = hashlib.sha256(prev_hash.encode()).digest()
+            headerHash = hashlib.sha256(prev_hash.encode()).hexdigest()
             self.update_hash(idx, headerHash)
 
     def update_hash(self, pos, hash):

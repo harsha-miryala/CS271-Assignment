@@ -69,7 +69,7 @@ class Connections(Thread):
                 print("RELEASE recieved from " + str(data.fromPid) + " at " + str(CLOCK))
                 BLOCKCHAIN.header().update_status(data.status)
                 BLOCKCHAIN.move()
-                if BLOCKCHAIN.head-1 != BLOCKCHAIN.length and BLOCKCHAIN.header().transaction.sender == PID and REPLY_COUNT == CLIENT_COUNT-1:
+                if BLOCKCHAIN.head != -1 and BLOCKCHAIN.header().transaction.sender == PID and REPLY_COUNT == CLIENT_COUNT-1:
                     print("Executing Transaction")
                     self.handle_transaction(data)
                     REPLY_COUNT = 0
@@ -232,7 +232,7 @@ def main():
             CONNECTIONS[0].sendall(pickle.dumps(request))
             balance = pickle.loads(CONNECTIONS[0].recv(BUFFER_SIZE))
             print("======================================")
-            print("The balance for Client {} is {} $".format(PID, balance))
+            print("The balance for Client_{} is ${}".format(PID, balance))
             print("======================================")
             continue
         
@@ -242,6 +242,7 @@ def main():
                 print("Can't send money to yourself")
                 continue
             CLOCK.updateClock(REQ_CLOCK)
+            # print("Current clock of Client_{} : {}".format(PID, CLOCK))
             print("Current clock of process " + str(PID) + " : " + str(CLOCK))
             # Add the transaction
             transaction = Transaction(PID, reciever, amount)
