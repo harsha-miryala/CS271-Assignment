@@ -81,7 +81,7 @@ class Block:
         self.status = IN_PROGRESS
 
     def __str__(self):
-        return str(self.headerHash) + "|\n" + str(self.transaction) + \
+        return str(self.headerHash) + " |\n" + str(self.transaction) + \
                " | " + self.status + " | " + str(self.clock)
     
     def update_status(self, status):
@@ -108,7 +108,7 @@ class Blockchain:
         self.data.append(block)
         self.length += 1
         self.head = self.length - 1
-        print("{} added at {} with clock - {}".format(transaction, self.head, clock))
+        print("{} added at {} in blockchain with clock : {}".format(transaction, self.head, clock))
     
     def insert(self, transaction, clock):
         if self.head == -1:
@@ -134,7 +134,7 @@ class Blockchain:
         block = Block(headerHash, transaction, clock)
         self.data.insert(reqd_pos+1, block)
         self.length += 1
-        print("{} added at {} with clock - {}".format(transaction, reqd_pos+1, clock))
+        print("{} added at {} in blockchain with clock : {}".format(transaction, reqd_pos+1, clock))
         self.update_chain(reqd_pos+1)
     
     def update_chain(self, pos):

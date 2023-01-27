@@ -23,6 +23,7 @@ class Server_Thread(Thread):
             try:
                 request = self.connection.recv(BUFFER_SIZE)
             except:
+                self.connection.close()
                 print("Closing the connection for Client {}".format(self.pid))
                 break
             if not request:
@@ -35,13 +36,13 @@ class Server_Thread(Thread):
 
     def get_balance(self, data):
         global BALANCE_SHEET
-        print("Sending the balance to Client {} as {}".format(data.fromPid, BALANCE_SHEET[data.fromPid]))
+        print("Sending the balance to Client_{} as ${}".format(data.fromPid, BALANCE_SHEET[data.fromPid]))
         CLIENT_MAP[data.fromPid].connection.sendall(pickle.dumps(BALANCE_SHEET[data.fromPid]))
 
     def add_transaction(self, data):
         global BALANCE_SHEET
         global CLIENT_MAP
-        print("Adding a transaction of {} $ from Client {} to Client {}".format(data.transaction.amount,
+        print("Adding a transaction of ${} from Client_{} to Client_{}".format(data.transaction.amount,
                                     data.transaction.sender, data.transaction.reciever))
         try:
             BALANCE_SHEET[data.transaction.sender] -= data.transaction.amount
@@ -54,7 +55,7 @@ def printBalance():
     global BALANCE_SHEET
     print("=========================================")
     for pid in BALANCE_SHEET:
-        print("Client {} : {}".format(pid, BALANCE_SHEET[pid]))
+        print("Client_{} : ${}".format(pid, BALANCE_SHEET[pid]))
     print("=========================================")
 
 def main():
@@ -75,7 +76,7 @@ def main():
     client_count = 0
     while client_count < CLIENT_COUNT:
         connection, client_address = server_socket.accept()
-        print("Connected to Client {} at port : {}".format(client_address[1]%10, client_address[1]))
+        print("Connected to Client_{} at port {}".format(client_address[1]%10, client_address[1]))
         pid = client_address[1]%10
         client = Server_Thread(connection, client_address[0], client_address[1], pid)
         client.start()

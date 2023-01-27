@@ -16,9 +16,10 @@ USER_INPUT = ""
 REPLY_COUNT = 0
 
 class Connections(Thread):
-    def __init__(self,connection):
+    def __init__(self, connection, to_client):
         Thread.__init__(self)
         self.connection = connection
+        self.to_client = to_client
 
     def run(self):
         global REPLY_COUNT
@@ -28,7 +29,12 @@ class Connections(Thread):
         global BLOCKCHAIN
 
         while True:
-            response = self.connection.recv(BUFFER_SIZE)
+            try:
+                response = self.connection.recv(BUFFER_SIZE)
+            except:
+                self.connection.close()
+                print("Closing the connection to {}".format(self.to_client))
+                break
             if not response:
                 continue
             data = pickle.loads(response)
@@ -37,23 +43,25 @@ class Connections(Thread):
                 # Add the block to blockchain and get the transaction details from data
                 REQ_CLOCK = data.clock.copy()
                 BLOCKCHAIN.insert(data.transaction, REQ_CLOCK)
-                print("REQUEST recieved from " + str(data.fromPid) + " at " + str(REQ_CLOCK))
+                print("MUTEX received from Client_{} at {}".format(data.fromPid, CLOCK))
                 sleep()
-                print("REPLY sent to " + str(data.fromPid) + " at " + str(CLOCK))
+                print("REPLY sent to Client_{} at {}".format(data.fromPid, CLOCK))
                 reply = RequestMessage(PID, CLOCK, REPLY)
                 self.connection.send(pickle.dumps(reply))
 
             if data.reqType == REPLY:
-                print("REPLY recieved from " + str(data.fromPid) + " at " + str(data.clock))
+                print("REPLY received from Client_{} at {}".format(data.fromPid, CLOCK))
                 REPLY_COUNT += 1
                 # you have all replies, how do u know when to enter into lock
+                sleep()
                 if REPLY_COUNT == CLIENT_COUNT-1 and BLOCKCHAIN.header().transaction.sender == PID:
-                    print("Local Queue: ")
+                    print("Local Queue:")
                     for idx in range(BLOCKCHAIN.head, BLOCKCHAIN.length):
-                        print("{}, {}".format(BLOCKCHAIN.data[idx].clock, BLOCKCHAIN.data[idx].transaction))
+                        print("{}, {}".format(BLOCKCHAIN.data[idx].clock,
+                              BLOCKCHAIN.data[idx].transaction))
                     print("End of Local Queue")
                     print("Executing Transaction")
-                    self.handle_transaction(data)
+                    self.handle_transaction()
                     REPLY_COUNT = 0
                     TRANSACTION_FLAG = True
 
@@ -64,38 +72,40 @@ class Connections(Thread):
                 # data.fromPid and go back and check
                 # time complexity = O(no.of clients)
                 for idx in range(BLOCKCHAIN.head, BLOCKCHAIN.length):
-                    print("{}, {}".format(BLOCKCHAIN.data[idx].clock, BLOCKCHAIN.data[idx].transaction))
+                    print("{}, {}".format(BLOCKCHAIN.data[idx].clock,
+                                          BLOCKCHAIN.data[idx].transaction))
                 print("End of Local Queue")
-                print("RELEASE recieved from " + str(data.fromPid) + " at " + str(CLOCK))
+                print("RELEASE received from Client_{} at {}".format(data.fromPid, CLOCK))
                 BLOCKCHAIN.header().update_status(data.status)
                 BLOCKCHAIN.move()
+                sleep()
                 if BLOCKCHAIN.head != -1 and BLOCKCHAIN.header().transaction.sender == PID and REPLY_COUNT == CLIENT_COUNT-1:
-                    print("Executing Transaction")
-                    self.handle_transaction(data)
+                    print("Executing transaction for block with clock : {}".format(BLOCKCHAIN.header().clock))
+                    self.handle_transaction()
                     REPLY_COUNT = 0
                     TRANSACTION_FLAG = True
 
-    def handle_transaction(self, data):
+    def handle_transaction(self):
         global CLOCK
         global PID
         global CONNECTIONS
         global USER_INPUT
         transaction = BLOCKCHAIN.header().transaction
         sleep()
-        print("Balance request sent to server" + " at " + str(CLOCK))
+        print("Balance request sent to server at {}".format(CLOCK))
         request = RequestMessage(PID, CLOCK, BALANCE)
         CONNECTIONS[0].sendall(pickle.dumps(request))
         balance = pickle.loads(CONNECTIONS[0].recv(BUFFER_SIZE))
         sleep()
         print("======================================")
-        print("Balance before transaction - {} $".format(balance))
+        print("Balance before transaction : ${}".format(balance))
         status = None
         if balance >= transaction.amount:
-            request = RequestMessage(PID, data.clock, TRANSACT, None, transaction)
+            request = RequestMessage(PID, CLOCK, TRANSACT, None, transaction)
             CONNECTIONS[0].send(pickle.dumps(request))
             message = pickle.loads(CONNECTIONS[0].recv(BUFFER_SIZE))
-            print("Transaction was " + str(message))
-            print("Balance after transaction is {} $".format(balance-transaction.amount))
+            print("Transaction was {}".format(message))
+            print("Balance after transaction : ${}".format(balance-transaction.amount))
             print("======================================")
             status = SUCCESS
         else:
@@ -115,9 +125,9 @@ def sendRequest(client, clock, reqType, status, transaction):
     global CONNECTIONS
     sleep()
     if reqType == "MUTEX":
-        print("REQUEST sent to " + str(client) + " at " + str(clock))
+        print("MUTEX sent to Client_{} at {}".format(client, clock))
     elif reqType == "RELEASE":
-        print("RELEASE sent to " + str(client) + " at " + str(clock))
+        print("RELEASE sent to Client_{} at {} with status {}".format(client, clock, status))
     msg = RequestMessage(PID, clock, reqType, status, transaction)
     data_string = pickle.dumps(msg)
     CONNECTIONS[client].sendall(data_string)
@@ -143,17 +153,19 @@ def get_connection(source, dest):
         client2client.listen(10)
         conn, client_address = client2client.accept()
         CONNECTIONS[dest] = conn
-        new_client = Connections(conn)
+        new_client = Connections(conn, dest)
         new_client.start()
-        print("Connected to Client {} at port {} from {}".format(dest, client_address[1], CLIENT_TO_CLIENT_PORTS[source][dest]))
+        print("Connected to Client_{} at port {} from {}".format(dest,
+              client_address[1], CLIENT_TO_CLIENT_PORTS[source][dest]))
     else:
         # Connection to the port already up
         try:
             client2client.connect((HOST, CLIENT_TO_CLIENT_PORTS[dest][source]))
             CONNECTIONS[dest] = client2client
-            new_connection = Connections(client2client)
+            new_connection = Connections(client2client, dest)
             new_connection.start()
-            print("Connected to Client {} at port {} from {}".format(dest, CLIENT_TO_CLIENT_PORTS[dest][source], CLIENT_TO_CLIENT_PORTS[source][dest]))
+            print("Connected to Client_{} at port {} from {}".format(dest,
+                  CLIENT_TO_CLIENT_PORTS[dest][source], CLIENT_TO_CLIENT_PORTS[source][dest]))
         except socket.error as e:
             print(str(e))
 
@@ -242,15 +254,14 @@ def main():
                 print("Can't send money to yourself")
                 continue
             CLOCK.updateClock(REQ_CLOCK)
-            # print("Current clock of Client_{} : {}".format(PID, CLOCK))
-            print("Current clock of process " + str(PID) + " : " + str(CLOCK))
+            print("Current clock of Client_{} : {}".format(PID, CLOCK))
             # Add the transaction
             transaction = Transaction(PID, reciever, amount)
             BLOCKCHAIN.insert(transaction, CLOCK.copy())
             broadcast(MUTEX, clock=CLOCK.copy(), transaction=transaction)
             REPLY_COUNT = 0
             while TRANSACTION_FLAG == False:
-                time.sleep(3)
+                sleep()
 
     close_sockets()
 
