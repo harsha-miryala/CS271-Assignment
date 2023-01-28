@@ -1,5 +1,5 @@
 import socket
-from threading import Thread
+from threading import Thread, Lock
 import pickle
 import time
 from util import *
@@ -13,7 +13,8 @@ CONNECTIONS = {}
 PID = 0
 TRANSACTION_FLAG = False
 USER_INPUT = ""
-REPLY_COUNT = 0
+REPLY_COUNT = None
+B_LOCK = Lock()
 
 class Connections(Thread):
     def __init__(self, connection, to_client):
@@ -27,6 +28,7 @@ class Connections(Thread):
         global CLOCK
         global REQ_CLOCK
         global BLOCKCHAIN
+        global B_LOCK
 
         while True:
             try:
@@ -40,89 +42,98 @@ class Connections(Thread):
             data = pickle.loads(response)
 
             if data.reqType == MUTEX:
-                # Add the block to blockchain and get the transaction details from data
-                REQ_CLOCK = data.clock.copy()
-                BLOCKCHAIN.insert(data.transaction, REQ_CLOCK)
-                print("MUTEX received from Client_{} at {}".format(data.fromPid, CLOCK))
-                sleep()
-                print("REPLY sent to Client_{} at {}".format(data.fromPid, CLOCK))
-                reply = RequestMessage(PID, CLOCK, REPLY)
-                self.connection.send(pickle.dumps(reply))
+                # Add the block to blockchain and get the transaction details from data and reply to the client
+                with B_LOCK:
+                    # storing the clock of the most recent request from other client
+                    # this can be used when assigning for a new process from client
+                    REQ_CLOCK = data.clock.copy()
+                    BLOCKCHAIN.insert(data.transaction, REQ_CLOCK)
+                    print("MUTEX received from Client_{} at {}".format(data.fromPid, CLOCK))
+                    # Adding sleep to mimic realtime - optional
+                    sleep()
+                    print("REPLY sent to Client_{} at {}".format(data.fromPid, CLOCK))
+                    reply = RequestMessage(PID, CLOCK, REPLY)
+                    self.connection.send(pickle.dumps(reply))
 
             if data.reqType == REPLY:
+                # Checking to see if client can enter critical section
+                # by confirming if its head of queue and have received all replies
                 print("REPLY received from Client_{} at {}".format(data.fromPid, CLOCK))
-                REPLY_COUNT += 1
-                # you have all replies, how do u know when to enter into lock
-                sleep()
-                if REPLY_COUNT == CLIENT_COUNT-1 and BLOCKCHAIN.header().transaction.sender == PID:
-                    print("Local Queue:")
-                    for idx in range(BLOCKCHAIN.head, BLOCKCHAIN.length):
-                        print("{}, {}".format(BLOCKCHAIN.data[idx].clock,
-                              BLOCKCHAIN.data[idx].transaction))
-                    print("End of Local Queue")
-                    print("Executing Transaction")
-                    self.handle_transaction()
-                    REPLY_COUNT = 0
-                    TRANSACTION_FLAG = True
+                REPLY_COUNT.add(data.fromPid)
+                with B_LOCK:
+                    while BLOCKCHAIN.head != -1 and BLOCKCHAIN.header().transaction.sender == PID and REPLY_COUNT.count()>=1:
+                        print("Entering critical section through reply from Client_{}".format(data.fromPid))
+                        print("Printing local queue:")
+                        for idx in range(BLOCKCHAIN.head, BLOCKCHAIN.length):
+                            print("{}, {}".format(BLOCKCHAIN.data[idx].clock, BLOCKCHAIN.data[idx].transaction))
+                        print("End of local queue")
+                        print("Executing transaction for block with clock : {}".format(BLOCKCHAIN.header().clock))
+                        self.handle_transaction()
+                        REPLY_COUNT.decrement()
+                        data.fromPid = PID
 
             if data.reqType == RELEASE:
-                print("Inside release")
-                print("Local Queue:")
-                # check the status from data and update the blockchain
-                # data.fromPid and go back and check
-                # time complexity = O(no.of clients)
-                for idx in range(BLOCKCHAIN.head, BLOCKCHAIN.length):
-                    print("{}, {}".format(BLOCKCHAIN.data[idx].clock,
-                                          BLOCKCHAIN.data[idx].transaction))
-                print("End of Local Queue")
+                # Checking to see if client can enter critical section
+                # by confirming if its head of queue post receiving the release response
                 print("RELEASE received from Client_{} at {}".format(data.fromPid, CLOCK))
                 BLOCKCHAIN.header().update_status(data.status)
                 BLOCKCHAIN.move()
-                sleep()
-                if BLOCKCHAIN.head != -1 and BLOCKCHAIN.header().transaction.sender == PID and REPLY_COUNT == CLIENT_COUNT-1:
-                    print("Executing transaction for block with clock : {}".format(BLOCKCHAIN.header().clock))
-                    self.handle_transaction()
-                    REPLY_COUNT = 0
-                    TRANSACTION_FLAG = True
+                with B_LOCK:
+                    while BLOCKCHAIN.head != -1 and BLOCKCHAIN.header().transaction.sender == PID and REPLY_COUNT.count()>=1:
+                        print("Entering critical section through release from Client_{}".format(data.fromPid))
+                        print("Printing local queue:")
+                        for idx in range(BLOCKCHAIN.head, BLOCKCHAIN.length):
+                            print("{}, {}".format(BLOCKCHAIN.data[idx].clock, BLOCKCHAIN.data[idx].transaction))
+                        print("End of local queue")
+                        print("Executing transaction for block with clock : {}".format(BLOCKCHAIN.header().clock))
+                        self.handle_transaction()
+                        REPLY_COUNT.decrement()
+                        data.fromPid = PID
 
     def handle_transaction(self):
         global CLOCK
         global PID
         global CONNECTIONS
         global USER_INPUT
+        # getting the transaction to be processed
         transaction = BLOCKCHAIN.header().transaction
-        sleep()
+        # obtaining balance from server to make sure we have enough
         print("Balance request sent to server at {}".format(CLOCK))
         request = RequestMessage(PID, CLOCK, BALANCE)
         CONNECTIONS[0].sendall(pickle.dumps(request))
         balance = pickle.loads(CONNECTIONS[0].recv(BUFFER_SIZE))
+        # Adding sleep to mimic realtime - optional
         sleep()
         print("======================================")
         print("Balance before transaction : ${}".format(balance))
         status = None
         if balance >= transaction.amount:
+            # intiating the transfer
             request = RequestMessage(PID, CLOCK, TRANSACT, None, transaction)
             CONNECTIONS[0].send(pickle.dumps(request))
             message = pickle.loads(CONNECTIONS[0].recv(BUFFER_SIZE))
+            # Adding sleep to mimic realtime - optional
+            sleep()
             print("Transaction was {}".format(message))
             print("Balance after transaction : ${}".format(balance-transaction.amount))
             print("======================================")
-            status = SUCCESS
+            status = message
         else:
             print("Insufficient Balance")
             print("======================================")
             status = ABORT
         BLOCKCHAIN.header().update_status(status)
         BLOCKCHAIN.move()
-        # send release with status of transaction
+        # send release to other clients with status of transaction
         broadcast(RELEASE, clock=CLOCK.copy(), status=status)
 
-def sleep():
-    time.sleep(SLEEP_TIME)
+def sleep(sleep_time=SLEEP_TIME):
+    time.sleep(sleep_time)
 
 def sendRequest(client, clock, reqType, status, transaction):
     global PID
     global CONNECTIONS
+    # Adding sleep to mimic realtime - optional
     sleep()
     if reqType == "MUTEX":
         print("MUTEX sent to Client_{} at {}".format(client, clock))
@@ -133,17 +144,20 @@ def sendRequest(client, clock, reqType, status, transaction):
     CONNECTIONS[client].sendall(data_string)
 
 def broadcast(reqType, clock=CLOCK, status=None, transaction=None):
+    # broadcasting the req to all other clients
     global PID
     for dest in range(1, CLIENT_COUNT+1):
         if PID != dest:
             sendRequest(dest, clock, reqType, status, transaction)
 
 def close_sockets():
+    # function to close connections
     global CONNECTIONS
     for connection in CONNECTIONS.values():
         connection.close()
 
 def get_connection(source, dest):
+    # generic utility to connect from client source to dest
     global CONNECTIONS
     client2client = socket.socket()
     client2client.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -178,10 +192,13 @@ def main():
     global REPLY_COUNT
     global TRANSACTION_FLAG
     global USER_INPUT
+    global B_LOCK
+
     if int(sys.argv[1])>CLIENT_COUNT or int(sys.argv[1])<0:
         print("PID not in the set of allowed pids".format(sys.argv[1]))
         exit()
     PID = int(sys.argv[1])
+    REPLY_COUNT = Reply(PID)
     current_port = CLIENT_TO_SERVER_PORTS[PID]
     
     # Connection to the server
@@ -221,15 +238,19 @@ def main():
     print("| To quit type 'Q'                                           |") 
     print("==============================================================")
     while True:
-        TRANSACTION_FLAG = False
+        # TRANSACTION_FLAG = False
         print("===== Enter a command to compute =====")
         USER_INPUT = input()
-        if USER_INPUT not in [QUIT, BALANCE, BCHAIN, HEAD] and len(USER_INPUT.split()) != 2:
+        if USER_INPUT not in [QUIT, BALANCE, BCHAIN, HEAD, CLK] and len(USER_INPUT.split()) != 2:
             print("Please enter valid input")
             continue
 
         if USER_INPUT == BCHAIN:
             BLOCKCHAIN.print()
+            continue
+
+        if USER_INPUT == CLK:
+            print("Clock of my client is {}".format(CLOCK.copy().updateClock(REQ_CLOCK, inplace=False)))
             continue
 
         if USER_INPUT == HEAD:
@@ -243,25 +264,28 @@ def main():
             request = RequestMessage(PID, CLOCK, BALANCE)
             CONNECTIONS[0].sendall(pickle.dumps(request))
             balance = pickle.loads(CONNECTIONS[0].recv(BUFFER_SIZE))
+            # Adding sleep to mimic realtime - optional
+            sleep()
             print("======================================")
             print("The balance for Client_{} is ${}".format(PID, balance))
             print("======================================")
-            continue
         
         else:
-            reciever, amount = [int(x) for x in USER_INPUT.split()]
-            if reciever == PID:
-                print("Can't send money to yourself")
+            try:
+                reciever, amount = [int(x) for x in USER_INPUT.split()]
+            except:
+                print("Please enter valid input")
                 continue
-            CLOCK.updateClock(REQ_CLOCK)
-            print("Current clock of Client_{} : {}".format(PID, CLOCK))
-            # Add the transaction
-            transaction = Transaction(PID, reciever, amount)
-            BLOCKCHAIN.insert(transaction, CLOCK.copy())
-            broadcast(MUTEX, clock=CLOCK.copy(), transaction=transaction)
-            REPLY_COUNT = 0
-            while TRANSACTION_FLAG == False:
-                sleep()
+            if reciever == PID or reciever > CLIENT_COUNT:
+                print("Can't send money to yourself or non-existing member")
+                continue
+            with B_LOCK:
+                CLOCK.updateClock(REQ_CLOCK)
+                print("Current clock of Client_{} : {}".format(PID, CLOCK))
+                # Add the transaction
+                transaction = Transaction(PID, reciever, amount)
+                BLOCKCHAIN.insert(transaction, CLOCK.copy())
+                broadcast(MUTEX, clock=CLOCK.copy(), transaction=transaction)
 
     close_sockets()
 

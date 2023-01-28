@@ -73,6 +73,7 @@ def main():
 
     BALANCE_SHEET = {x+1: 10 for x in range(CLIENT_COUNT)}
 
+    # Setting up connection to clients
     client_count = 0
     while client_count < CLIENT_COUNT:
         connection, client_address = server_socket.accept()
@@ -93,6 +94,7 @@ def main():
         if user_input == BALANCE:
             printBalance()
         elif user_input == QUIT:
+            # Closing connection to clients
             server_socket.close()
             for connection in CLIENT_MAP.values():
                 connection.connection.close()

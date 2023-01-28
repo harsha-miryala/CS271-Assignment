@@ -31,6 +31,7 @@ RELEASE = "RELEASE"
 REPLY = "REPLY"
 IN_PROGRESS = "IN_PROGRESS"
 HEAD = "HEAD"
+CLK = "CLK"
 
 class RequestMessage:
     def __init__(self, fromPid, clock, reqType, status = None, transaction = None):
@@ -46,20 +47,24 @@ class LamportClock:
         self.pid = pid
     
     def copy(self):
+        # generating copy so that pass by ref issue doesnt arise
         return LamportClock(self.clock, self.pid)
 
     def incrementClock(self):
         self.clock += 1
 
     def __lt__(self, other):
+        # using total lamport ordering to break ties
         if self.clock < other.clock:
             return True
         elif self.clock == other.clock:
             return self.pid < other.pid
         return False
 
-    def updateClock(self, other):
+    def updateClock(self, other, inplace=True):
         self.clock = max(self.clock, other.clock) + 1
+        if not inplace:
+            return self.copy()
 
     def __str__(self):
         return str(self.clock) + "." + str(self.pid)
@@ -94,14 +99,17 @@ class Blockchain:
         self.length = 0
     
     def header(self):
-        return self.data[self.head] if self.length!=0 else "Empty Blockchain"
+        # points to the header .. index could be -1 i.e. picks already processed transaction
+        return self.data[self.head] if self.length!=0 else None
     
     def move(self):
+        # move the header to the next one if something is waiting for processing
         self.head += 1
         if self.head >= self.length:
             self.head = -1
     
     def append(self, transaction, clock):
+        # add the block at the end of the queue
         prev_hash = "" if self.length==0 else str(self.data[self.length-1])
         headerHash = hashlib.sha256(prev_hash.encode()).hexdigest()
         block = Block(headerHash, transaction, clock)
@@ -116,6 +124,7 @@ class Blockchain:
             return
         # check if it can be added back
         reqd_pos = self.head
+        # checking if it has to be inserted before head
         for idx in range(self.head, -1, -1):
             if self.data[idx].status != IN_PROGRESS:
                 break
@@ -124,6 +133,8 @@ class Blockchain:
                 self.head = reqd_pos + 1
             else:
                 break
+        # checking if it has to be inserted after head
+        # if it enters above loop, for sure it wont enter here
         for idx in range(self.head+1, self.length):
             if self.data[idx].clock < clock:
                 reqd_pos += 1
@@ -138,12 +149,14 @@ class Blockchain:
         self.update_chain(reqd_pos+1)
     
     def update_chain(self, pos):
+        # recompute the hash from the given position
         for idx in range(pos, self.length):
             prev_hash = "" if idx==0 else str(self.data[idx-1])
             headerHash = hashlib.sha256(prev_hash.encode()).hexdigest()
             self.update_hash(idx, headerHash)
 
     def update_hash(self, pos, hash):
+        # update the hash to the given hash
         self.data[pos].headerHash = hash
 
     def print(self):
@@ -152,3 +165,30 @@ class Blockchain:
         for block in self.data:
             print(str(block))
         print("======================================")
+
+class Reply:
+    """
+    Created to track the replies obtained from other clients
+    Tracking the individual count of responses from each client
+    """
+    def __init__(self, pid):
+        self.data = {}
+        for id in range(1, CLIENT_COUNT+1):
+            if id!=pid:
+                self.data[id] = 0
+
+    def add(self, pid):
+        # add count for the given client
+        self.data[pid] += 1
+    
+    def decrement(self):
+        # decrement count for each client
+        for ele in self.data:
+            self.data[ele] -= 1
+    
+    def count(self):
+        # compute the min count of reponses per client
+        ans = 1e9
+        for val in self.data.values():
+            ans = min(ans, val)
+        return ans
