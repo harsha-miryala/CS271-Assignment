@@ -1,6 +1,8 @@
 # CS271-Assignment
 Distributed Systems Assignment to create blockchain using Lamport Algo
 
+### For implementation of Lamport Algorithm, its essential to have a TCP connection as if any of the REPLY / MUTEX / RELEASE messages fail (which is possible via UDP), its not possible to implement the alogirthm effectively
+
 # Run server as
 python3 server.py
 
